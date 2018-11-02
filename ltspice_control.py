@@ -25,6 +25,7 @@ import pandas as pd
 from datetime import datetime
 import time
 from numbers import Number
+from functools import reduce, partial
 
 spicepath = r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"
 simfolder = r"ltspice_sims"
@@ -33,27 +34,27 @@ if not os.path.isdir(simfolder):
     os.makedirs(simfolder)
 
 netlist = '''
-* Slesazeck thermal NDR simulation
+* Thermal NDR simulation
 Rd vd 0 R=Resistance()
 Rs vd vin R=Rser
-C1 T 0 5e-10
+C1 T 0 {Cth}
 V1 vin 0 PWL(0 0 5 3 10 0)
 B1 T 0 I=dTdt()
 .FUNC dTdt()=-(Resistance()*i(Rd)**2-(v(T)-Tamb)/Rth)
-.FUNC Resistance()=R0*exp(q*(Ea+deltav())/(k*v(T)))
+.FUNC Resistance()=R0*exp(q*(Ea+deltav())/(boltz*v(T)))
 .FUNC deltav()=-sqrt(q*E()/(pi*e0*er))
 .FUNC dv()=v(vd)
 .FUNC E()=dv()/dox
 .PARAM R0=34
 .PARAM Rth=1.75e5
 .PARAM Ea=0.215
-.PARAM k=1.38e-23
 .PARAM Rser=330
 .PARAM q=1.6e-19
 .PARAM e0=8.85e-12
 .PARAM er=45
 .PARAM dox=18e-9
 .PARAM Tamb=298
+.PARAM Cth=5e-10
 .ic v(T)=Tamb
 .tran 0 10 0 1e-4
 .backanno
@@ -81,6 +82,10 @@ def replaceparams(netlist, **kwargs):
     else:
         return netlist
 
+def get_params(netlist):
+    params = re.findall('.PARAM (.*)=(.*)', netlist)
+    params = {k:np.float32(v) for k,v in params}
+    return params
 def get_title(netlist):
     if netlist.startswith('*'):
         title = netlist.split('\n', 1)[0][1:].strip()
@@ -127,7 +132,8 @@ def netchange(netlist, newline):
         del netlines[i]
     else:
         # Find a good index to insert the new line
-        i = argmax(similarity)
+        # (After the most similar line)
+        i = argmax(similarity) + 1
 
     netlines.insert(i, newline)
     return '\n'.join(netlines)
@@ -161,26 +167,35 @@ def PWL(t, v):
     return f'PWL({interleaved_str})'
 
 
+def transient(start=0, stop=1, maxstep=1e-4):
+    return f'.tran 0 {stop} {start} {maxstep}'
+
 class NetList(object):
     '''
     NOT DONE
-    Trying to make a class that can parse and construct ltspice netlists
-    Hopefully using some convenient python syntax
+    I'm tempted to go down the object oriented rabbit hole
+    Could make a class that can parse and construct ltspice netlists
+    Idea is to create a convenient python syntax which can modify an input netlist
+    Could give every type of spice command an object, which just evaluate to strings
+
     maybe netlist[3] can retrieve and assign new lines
     maybe netlist.param2 = 45.3 can set .PARAMS, overwriting as necessary
-    maybe netlist.connect(node1, node2) can add a wire
-    maybe netlist.resistor(node1, node2, value) can add a resistor...
+    maybe netlist.wire(node1, node2) can add a wire
+    maybe netlist.resistor(node1, node2, value, name=None) can add a resistor...
     maybe netlist.voltage(type, param2, param2,..) can add/change a voltage source
+    maybe netlist + string can merge that line of code into the netlist
 
     since the content of the netlist string will depend on the state of the instance,
     we will need to construct it only when it is asked for
 
     Should also keep the lines organized in some way, connections at top, funcs, params, ...
     '''
-    def __init__(self, netlist0):
+    def __init__(self, netlist0='* New netlist'):
         # Can initalize with an existing netlist
-        self._netlist = netlist0
-        netparams = re.findall('.PARAM (.*)=(.*)', netlist)
+        self._netstring = netlist0
+        self._netlist = netlist0.split('\n')
+        netparams = re.findall('.PARAM (.*)=(.*)', netlist0)
+        # Are params always floats?
         netparams = {k:np.float32(v) for k,v in netparams}
         for k,v in netparams.items():
             setattr(self, k, v)
@@ -212,18 +227,20 @@ class NetList(object):
         for k,v in self.__dict__.items():
             if isinstance(v, Number):
                 # TODO: this can replace a param, but cannot add or delete a param
-                newnetlist = replaceparam(self._netlist, k, v)
-                self._netlist = newnetlist
-        return self._netlist
+                newnetlist = replaceparam(self._netstring, k, v)
+                self._netstring = newnetlist
+        return self._netstring
 
     @netlist.setter
     def netlist(self, value):
-        self._netlist = value
+        self._netstring = value
 
 
 def runspice(netlist):
     ''' Run a netlist with ltspice and return all the output data '''
     t0 = time.time()
+    if type(netlist) is list:
+        netlist = '\n'.join(netlist)
     # Write netlist to disk
     title = valid_filename(get_title(netlist))
     netlistfp = os.path.join(simfolder, timestamp() + f'_{title}.net')
@@ -413,3 +430,45 @@ if 0:
         data.append(d)
     df = pd.DataFrame(data)
 
+if 0:
+    # What if you did something like this?
+
+    def param(name, value):
+        return f'.PARAM {name}={value}'
+
+    def element(name, cathode, anode, val):
+        return f'{name} {cathode} {anode} {val}'
+
+
+    # Could give nodes python names
+    vin = 'vin'
+    modifications = [
+                    param('a', 3),
+                    param('b', 10),
+                    param('c', 'a*b') # Quoted code is evaluated by spice.
+                    element('C2', vin, 0, 1e-9)
+                    transient(0, 1, 1e-4)
+                    ]
+    newnetlist = reduce(netchange, modifications, netlist)
+
+    def simchange(netlist0):
+        def newnetlist(*modifications):
+            return reduce(netchange, *modifications, netlist0)
+        return newnetlist
+
+    simname = simchange(netlist)
+    newnetlist = simname(modifications)
+    d = runspice(netnetlist)
+
+    # OO approach might look like this
+    sim = SimClass(netlist0)
+    sim.a = 3
+    sim.b = 10
+    sim.c = sim.a * sim.b # Code is evaluated by python
+    sim += Capacitor(1, 'in', 0, 1e-9)
+    d = sim.run()
+    # Or
+    d = runspice(sim)
+
+    # Is this better? Interface seems at first to be nicer. But the complex code is in the class definitions
+    # Basically it looks nice on the surface, but it's a mess on the inside?
