@@ -21,7 +21,7 @@ from ltspice_control import *
 from functools import partial
 
 netlist0 = '''
-* Thermal NDR simulation
+Thermal NDR simulation
 Rd vd 0 R=Resistance()
 Rs vd vin R=Rser
 C1 T 0 {Cth}
@@ -45,7 +45,7 @@ B1 T 0 I=dTdt()
 .tran 0 10 0 1e-4
 .backanno
 .end
-'''.strip()
+'''.strip().split('\n')
 
 # Attempt to capture the cell shape dependence
 netlist1 = '''
@@ -74,7 +74,7 @@ B1 T 0 I=dTdt()
 .tran 0 10 0 1e-4
 .backanno
 .end
-'''.strip()
+'''.strip().split('\n')
 
 # Vary every parameter by +-20%
 netparams = get_params(netlist0)
