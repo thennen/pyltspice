@@ -21,6 +21,7 @@ import os
 import re
 import numpy as np
 import pandas as pd
+from collections import iterable
 from datetime import datetime
 import time
 import fnmatch
@@ -161,24 +162,26 @@ def read_raw(filepath):
 
     return outdict
 
-def read_spice(filepath):
+def read_spice(filepath, namemap=None):
     ''' Read all the information contained in all the spice files with the same name (.raw, .net, .log)'''
     filepath = os.path.abspath(filepath)
 
-    rawfile = replace_ext(filepath, 'raw')
-    logfile = replace_ext(filepath, 'log')
-    netfile = replace_ext(filepath, 'net')
-
-    rawdata = read_raw(rawfile)
-    logdata = read_log(logfile)
-    netdata = read_net(netfile)
+    rawdata = read_raw(filepath)
+    logdata = read_log(filepath)
+    netdata = read_net(filepath)
 
     # Pick and choose the data you want to output
-
     dataout = {**rawdata, **netdata}
     dataout['sim_time'] = logdata['sim_time']
     dataout['solver'] = logdata['solver']
     dataout['method'] = logdata['method']
+
+    # Map to other names if you want
+    if namemap is not None:
+        for oldk, newk in namemap.items():
+            if oldk in dataout:
+                dataout[newk] = dataout[oldk]
+                del dataout[oldk]
 
     return dataout
 
@@ -291,6 +294,14 @@ def get_title(netlist):
 
 
 ### Functions for operating on netlist
+def flatten(nested):
+    ''' flatten a tree of strings '''
+    for i in nested:
+            if isinstance(i, Iterable) and not isinstance(i, str):
+                for subc in flatten(i):
+                    yield subc
+            else:
+                yield i
 def similarity(netlist, line):
     '''
     Return the number of characters that are the same as 'line' for each line of netlist
@@ -339,13 +350,27 @@ def netinsert(netlist, newline):
 
     return netlist
 
+def netchange(netlist, *newlines):
+    ''' Pass any (potentially nested) list of strings and merge them with netlist '''
+    strings = flatten(newlines)
+    return reduce(netinsert, strings, netlist)
 def netchanger(netlist):
-    ''' Remembers the input netlist, and allows you to modify it by passing partial netlists '''
-    # TODO: can we make this work for single lines as well as iterables of lines?
-    def newnetlist(*modifications):
-        return reduce(netinsert, *modifications, netlist)
-    return newnetlist
+    ''' Closure that remembers the input netlist, and allows you to modify it by passing partial netlists '''
+    changer = partial(netchange, netlist)
+    return changer
 
+def paramchange(netlist, paramdict=None, **kwargs):
+    '''
+    If you only want to change .PARAMS, you can pass a dict of them to this function
+    Or pass them as keyword arguments
+    '''
+    newparams = []
+    if paramdict is not None:
+        newparams += [param(k, v) for k,v in paramdict.items()]
+    if kwargs:
+        newparams += [param(k, v) for k,v in kwargs.items()]
+    newnet = netchange(netlist, newparams)
+    return newnet
 def set_title(netlist, title):
     '''
     First line is always the title?
