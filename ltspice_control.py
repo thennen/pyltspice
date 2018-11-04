@@ -1,22 +1,20 @@
 '''
-Let's see how clunky it is to run spice sim from python.
+Let's see how clunky it is to run spice simulations from python.
+Will be possible to express much more complicated operations than in the spice language
 
 As far as I know, we must communicate via file io
 
-Just need to translate python into whatever shitty language spice is using
-Or I could start by just making a few functions that modify existing spice code?
-Probably better to work on lists of strings (spice commands) rather than one \n joined string
-Or class that has the netlist, and stores .PARAMS as class params?
+Just need to translate python into shitty spice language.
+More often we will input existing netlists and do operations on them.
+I'm taking a functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
 
-Would like to be able to programmatically generate the connectivities as well
-
-Is it ever worth using spices ".STEP" ?  Or can I handle all looping in python?
-Maybe the file io takes a really long time?  I heard you can only .step 3 parameters.
-
-There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to work
-Problem is he wrote his own data container classes are clunky and I don't want to use them
-I want to use built-in data classes, or well established and maintained classes like pandas series and dataframes
+There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to work.
+Problem is he wrote his own data container classes which are clunky and I don't want to use them.
+I want to use built-in data classes, or well established and maintained classes like pandas series and dataframes.
 '''
+#TODO: Spice can't tolerate spaces in equations, which makes them really hard to read.
+# It took me an hour to realize this, anything following a space is just ignored
+# We could easily allow spaces here and then always delete them before writing to disk
 
 import subprocess
 import os
@@ -35,30 +33,32 @@ simfolder = r"ltspice_sims"
 if not os.path.isdir(simfolder):
     os.makedirs(simfolder)
 
+
 netlist = '''
-* Thermal NDR simulation
+Thermal NDR voltage sweeping with series resistor (Slesazeck parameters)
 Rd vd 0 R=Resistance()
 Rs vd vin R=Rser
 C1 T 0 {Cth}
-V1 vin 0 PWL(0 0 5 3 10 0)
+V1 vin 0 PWL(0 0 {sweepdur/2} {sweepmax} {sweepdur} 0)
 B1 T 0 I=dTdt()
 .FUNC dTdt()=-(Resistance()*i(Rd)**2-(v(T)-Tamb)/Rth)
-.FUNC Resistance()=R0*exp(q*(Ea+deltav())/(boltz*v(T)))
-.FUNC deltav()=-sqrt(q*E()/(pi*e0*er))
+.FUNC Resistance()=R0*exp(echarge*(Ea+deltav())/(boltz*v(T)))
+.FUNC deltav()=-sqrt(echarge*E()/(pi*e0*er))
 .FUNC dv()=v(vd)
 .FUNC E()=dv()/dox
 .PARAM R0=34
 .PARAM Rth=1.75e5
 .PARAM Ea=0.215
-.PARAM Rser=330
-.PARAM q=1.6e-19
+.PARAM Rser=200
 .PARAM e0=8.85e-12
 .PARAM er=45
 .PARAM dox=18e-9
 .PARAM Tamb=298
 .PARAM Cth=5e-10
+.PARAM sweepdur=10
+.PARAM sweepmax=3
 .ic v(T)=Tamb
-.tran 0 10 0 1e-4
+.tran 0 {sweepdur} 0 {sweepdur/1e5}
 .backanno
 .end
 '''.strip().split('\n')
@@ -71,8 +71,9 @@ def netlist_fromfile(filepath):
 
 def read_log(filepath):
     ''' Read ltspice .log file and parse out some information. '''
+    filepath = replace_ext(filepath, 'log')
     print(f'Reading {filepath}')
-    with open(filepath, 'r', encoding='utf_16_le') as f:
+    with open(filepath, 'r') as f:
         lines = f.read()
     logitems = re.findall('(.*)[=,:] (.*)', lines)
     def convert_vals(val):
@@ -89,6 +90,7 @@ def read_log(filepath):
 def read_net(filepath):
     ''' Read ltspice .net file and parse out some information. '''
     netinfo = {}
+    filepath = replace_ext(filepath, 'net')
     print(f'Reading {filepath}')
     with open(filepath, 'r') as f:
         netlist = f.read()
@@ -108,6 +110,7 @@ def read_raw(filepath):
     Does not load parameter runs because I think those should just be done in python
     '''
     filepath = os.path.abspath(filepath)
+    filepath = replace_ext(filepath, 'raw')
 
     # Read information from the .raw file
     print(f'Reading {filepath}')
@@ -229,6 +232,8 @@ def write_wav(times, voltages, filename):
 
 def runspice(netlist):
     ''' Run a netlist with ltspice and return all the output data '''
+    # TODO: Sometimes when spice has an error, python just hangs forever.  Need a timeout or something.
+    # TODO: is there any benefit to spawning many ltspice processes at once, instead of sequentially?
     if type(netlist) is str:
         netlist = netlist.split('\n')
     t0 = time.time()
@@ -256,13 +261,13 @@ def runspice(netlist):
     d['sim_time_total'] = t1 - t0
     return d
 
-def recent(n=0, filter=''):
+def recentfile(filter='', n=0, folder=simfolder):
     ''' Return the nth most recent filepath'''
     filter = f'*{filter}*'
-    dirlist = os.listdir(simfolder)
+    dirlist = os.listdir(folder)
     matches = fnmatch.filter(dirlist, filter)
     recent = np.argsort(os.path.getmtime(f) for f in matches)
-    return matches[recent[-1-n]]
+    return os.path.join(folder, matches[recent[-1-n]])
 
 
 ### Netlist parsing
@@ -289,6 +294,7 @@ def get_title(netlist):
 def similarity(netlist, line):
     '''
     Return the number of characters that are the same as 'line' for each line of netlist
+    TODO: I think there's no reason for this function to exist outside of netinsert
     '''
     # This is not the most efficient thing ever but who cares
     def compare(str1, str2):
@@ -334,12 +340,17 @@ def netinsert(netlist, newline):
     return netlist
 
 def netchanger(netlist):
+    ''' Remembers the input netlist, and allows you to modify it by passing partial netlists '''
+    # TODO: can we make this work for single lines as well as iterables of lines?
     def newnetlist(*modifications):
         return reduce(netinsert, *modifications, netlist)
     return newnetlist
 
 def set_title(netlist, title):
-    ''' First line is always the title? '''
+    '''
+    First line is always the title?
+    Needs its own function because netinsert won't know how to identify and replace the title line
+    '''
     return [title] + netlist[1:]
 
 
@@ -348,6 +359,7 @@ def param(name, value):
     return f'.PARAM {name}={value}'
 
 def function(funcdef):
+    funcdef = funcdef.replace(' ', '')
     return f'.FUNC {funcdef}'
 def element(name, cathode, anode, val):
     '''
