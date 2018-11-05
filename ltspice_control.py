@@ -232,7 +232,7 @@ def write_wav(times, voltages, filename):
 
         w.writeframes(values)
 
-def runspice(netlist):
+def runspice(netlist, namemap=None):
     ''' Run a netlist with ltspice and return all the output data '''
     # TODO: Sometimes when spice has an error, python just hangs forever.  Need a timeout or something.
     # TODO: is there any benefit to spawning many ltspice processes at once, instead of sequentially?
@@ -257,7 +257,7 @@ def runspice(netlist):
     #subprocess.check_output([spicepath, '-b', '-ascii', '-Run', netlistfp])
     # Read result
     rawfp = os.path.splitext(netlistfp)[0] + '.raw'
-    d = read_spice(rawfp)
+    d = read_spice(rawfp, namemap=namemap)
     t1 = time.time()
     # Sim time including file io
     d['sim_time_total'] = t1 - t0
@@ -347,7 +347,7 @@ def netinsert(netlist, newline):
     else:
         # Find a good index to insert the new line
         # (After the most similar line)
-        i = argmax(simi) + 1
+        i = np.argmax(simi) + 1
         netlist.insert(i, newline)
 
     return netlist
