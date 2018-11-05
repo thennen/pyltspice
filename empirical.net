@@ -1,0 +1,29 @@
+Thermal NDR voltage sweeping with series resistor
+Rd vd 0 R=Resistance()
+Rs vd vin R=Rser
+* Integrator for calculating cell temperature
+C1 T 0 {Cth}
+B1 T 0 I=dTdtCth()
+* Voltage sweep
+V1 vin 0 PWL(0 0 {sweepdur/2} {sweepmax} {sweepdur} 0)
+.FUNC dTdtCth()=-(Resistance()*i(Rd)**2-(T()-Tamb)/Rth)
+.FUNC Resistance()=tox/wox**2/A*exp(echarge*Ea/boltz/T())*exp(-c*sqrt(E()))
+.FUNC E()=v(vd)/tox
+.FUNC T()=v(T)
+.PARAM wox=250e-9
+.PARAM tox=30e-9
+.PARAM A=14287.41
+.PARAM c=0.000260
+.PARAM Rth50090=8e4
+.PARAM Rth=Rth50090*500e-9/wox
+.PARAM Ea=0.26
+.PARAM Rser=5000
+.PARAM Tamb=300
+.PARAM Cth50090=5e-12
+.PARAM Cth=Cth50090/500e-9/500e-9/90e-9*wox*wox*tox
+.PARAM sweepdur=1
+.PARAM sweepmax=10
+.ic v(T)=Tamb
+.tran 0 {sweepdur} 0 {sweepdur/1e5}
+.backanno
+.end
