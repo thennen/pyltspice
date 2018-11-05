@@ -21,7 +21,7 @@ import os
 import re
 import numpy as np
 import pandas as pd
-from collections import iterable
+from collections import Iterable
 from datetime import datetime
 import time
 import fnmatch
@@ -33,7 +33,6 @@ simfolder = r"ltspice_sims"
 
 if not os.path.isdir(simfolder):
     os.makedirs(simfolder)
-
 
 netlist = '''
 Thermal NDR voltage sweeping with series resistor (Slesazeck parameters)
@@ -269,7 +268,9 @@ def recentfile(filter='', n=0, folder=simfolder):
     filter = f'*{filter}*'
     dirlist = os.listdir(folder)
     matches = fnmatch.filter(dirlist, filter)
-    recent = np.argsort(os.path.getmtime(f) for f in matches)
+    matchingfps = [os.path.join(folder, m) for m in matches]
+    # might be able to just assume they are in sorted order because of the file names...
+    recent = np.argsort([os.path.getmtime(f) for f in matchingfps])
     return os.path.join(folder, matches[recent[-1-n]])
 
 
@@ -329,7 +330,8 @@ def netinsert(netlist, newline):
     # Find the part of the string that identifies what the command does
     cmd, *rest = newline.split(' ', 1)
     if cmd in ('.PARAM', '.FUNC', '.ic'):
-        cmd_id = newline[:newline.find('=')]
+        # Compare also with the thing before the = sign
+        cmd_id = newline[:newline.find('=') + 1]
     else:
         cmd_id = cmd
 
@@ -362,7 +364,7 @@ def netchanger(netlist):
 def paramchange(netlist, paramdict=None, **kwargs):
     '''
     If you only want to change .PARAMS, you can pass a dict of them to this function
-    Or pass them as keyword arguments
+    Or pass them as keyword arguments, or both
     '''
     newparams = []
     if paramdict is not None:
@@ -390,6 +392,10 @@ def element(name, cathode, anode, val):
     '''
     For now we do not distinguish the element types.
     Spice will use the first letter of the name to decide what kind of element it is
+    TODO: Overwrite value without specifying cathode and anode
+    TODO: Autoname if name not given.
+    Don't know how this would work, as we would need to be aware of the netlist that it is getting applied to, but we already return a string before that happens.
+    DAMN YOU PYTHON
     '''
     return f'{name} {cathode} {anode} {val}'
 

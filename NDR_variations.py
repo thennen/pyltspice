@@ -3,7 +3,7 @@ Lots of people have this kind of self-heating model, but as far as I know they h
 explored it adequately or done much analysis, probably because they actually use guis like
 ltspice and of course you cannot accomplish anything doing that.
 
-Done previously, but I can do it better:
+Done previously:
 Series resistance variation
 Ambient temperature variation
 
@@ -40,7 +40,7 @@ params = {'A': 14287.41,
           'sweepdur': 1.0,
           'sweepmax': 10.0,
           'tox': 3e-08,
-          'wox': 5e-07}
+          'wox': 2.5e-07}
 
 # redefine read_raw to rename some of the dumb spice node names
 # TODO: do this better. ltspice_control.read_spice does not get the wrapped function
@@ -100,21 +100,43 @@ for t in (90, 30, 10):
         plt.pause(.1)
 
 ### Sweep rate variation
-deltanet = netchanger(net)
 data = []
-for dur in logspace(0, -8, 8):
-    newnet = deltanet([param('wox', 300e-9),
-                       param('Rser', Rs)])
+for dur in logspace(0, -8, 9):
+    newnet = deltanet(param('Rser', 5000),
+                      param('sweepmax', 15),
+                      param('sweepdur', dur))
     d = runspice(newnet)
     data.append(d)
-plotiv(d, x='Vd', y='I', ax=gca())
+plotiv(data, x='Vd', y='I')
 
 
 # Pulse dynamics
 # find steady state NDR point, pulse relative to that?
+data = []
+for Vm in linspace(2.2,3.5, 20):
+    d = runspice(deltanet(sqpulse(1, Vm, 5e-6, 1e-9),
+                          series_cap(3e-12),
+                          param('Rser', 1000)))
+    data.append(d)
 
-def pulse(Voff, Von, trise, ton, tfall, period=None, delay=0, ncycles=None):
 
+### make relaxation oscillations!
+newnet = deltanet(sqpulse(1, 3, 1e-6, 1e-9),
+                  series_cap(30e-12),
+                  param('Rser', 3000),
+                  param('Cth', 1e-14))
+d = runspice(newnet)
+
+# Some stabilize, some reach limit cycles
+data = []
+for Cp in linspace(1e-12, 1.5e-12, 10):
+    newnet = deltanet(element('V1', 'vin', 0, 3),
+                      transient(0, 3e-7, 3e-7/10000),
+                      series_cap(Cp),
+                      param('Rser', 3000),
+                      param('Cth', 1e-14))
+    d = runspice(newnet)
+    data.append(d)
 
 
 ### Vary every parameter by +-20%
