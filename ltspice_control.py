@@ -76,6 +76,11 @@ def read_log(filepath):
     with open(filepath, 'r') as f:
         lines = f.read()
     logitems = re.findall('(.*)[=,:] (.*)', lines)
+    if not logitems:
+        # quick fix, don't know why, but sometimes we have utf-16 encoding and sometimes not
+        with open(filepath, 'r', encoding='utf-16-le') as f:
+            lines = f.read()
+        logitems = re.findall('(.*)[=,:] (.*)', lines)
     def convert_vals(val):
         val = val.strip()
         if val.isdigit():
@@ -464,6 +469,41 @@ if 0:
     simname = simchange(netlist)
     newnetlist = simname(modifications)
     d = runspice(newnetlist)
+
+    # Or..
+
+    def ndrparams():
+        '''
+        One way to define parameters.
+        Nice syntax, doesn't pollute global namespace, computes values in python, not in spice
+        So if there are parameters written in terms of other parameters, we will see the values
+        in the netlist, not unevaluated strings.
+        TODO: Would be really cool to put simple python functions in here and use the ast to convert into a string
+            that spice can understand.  Then we can split functions into multiple lines, do more complicated things.
+            How would we handle references to node current/voltages?  Pass undefined names into spice as strings?
+        '''
+        def Resistance():
+            tox / wox**2 / A * exp(echarge * Ea / boltz / T()) * exp(-c * sqrt(E()))
+        wox = 250e-9
+        tox = 30e-9
+        A = 14287.41
+        c = 0.00026
+        Rth50090 = 80000.0
+        Rth = Rth50090 * 500e-9 / wox
+        Ea = 0.26
+        Rser = 5000.0
+        Tamb = 300.0
+        Cth50090 = 5e-12
+        Cth = Cth50090 / 500e-9**2 / 90e-9 * wox**2 *tox
+        sweepdur = 1.0
+        sweepmax = 10.0
+        return locals()
+    params = ndrparams()
+
+    net = netlist = paramchange(filenet, params)
+
+    # Could we use the above approach to also define functions/circuit elements/other directives?
+
 
     # OO approach might look like this
     class NetList(object):
