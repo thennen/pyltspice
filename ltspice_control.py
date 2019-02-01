@@ -397,8 +397,11 @@ def element(name, cathode, anode, val):
     '''
     return f'{name} {cathode} {anode} {val}'
 
-def transient(start=0, stop=1, maxstep=1e-4):
-    return f'.tran 0 {stop} {start} {maxstep}'
+def transient(start=0, stop=1, maxstep=1e-4, stopsteady=False):
+    cmd = f'.tran 0 {stop} {start} {maxstep}'
+    if stopsteady:
+        cmd += ' steady'
+    return cmd
 
 
 ### Spice waveforms
