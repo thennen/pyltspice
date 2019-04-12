@@ -237,6 +237,9 @@ def write_wav(times, voltages, filename):
 
         w.writeframes(values)
 
+# TODO cache some inputs and outputs, so that you don't keep running the same simulations
+#from functools import lru_cache
+#@lru_cache(maxsize=32)
 def runspice(netlist, namemap=None):
     ''' Run a netlist with ltspice and return all the output data '''
     # TODO: Sometimes when spice has an error, python just hangs forever.  Need a timeout or something.
@@ -407,6 +410,8 @@ def element(name, cathode, anode, val):
 def transient(start=0, stop=1, maxstep=1e-4):
     return f'.tran 0 {stop} {start} {maxstep}'
 
+def initial_condition(name, value):
+    return f'.ic {name}={value}'
 
 ### Spice waveforms
 # TODO add some useful functions that translate into these (e.g. triangle..)
