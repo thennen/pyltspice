@@ -1,14 +1,14 @@
 '''
-Let's see how clunky it is to run spice simulations from python.
+Let's see how clunky it is to run ltspice simulations from python.
 Will be possible to express much more complicated operations than in the spice language
 
-As far as I know, we must communicate via file io
+As far as I know, we must communicate with ltspice via file io
 
 Just need to translate python into shitty spice language.
 More often we will input existing netlists and do operations on them.
 I'm taking a functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
 
-There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to work.
+There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to ~work.
 Problem is he wrote his own data container classes which are clunky and I don't want to use them.
 I want to use built-in data classes, or well established and maintained classes like pandas series and dataframes.
 '''
@@ -28,37 +28,26 @@ import fnmatch
 from numbers import Number
 from functools import reduce, partial
 
+# Make sure this points to your spice executable, and that it is the XVII version
 spicepath = r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"
+
+# Here is where all the simulation files (netlists and results) will be dumped
 simfolder = r"ltspice_sims"
 
 if not os.path.isdir(simfolder):
     os.makedirs(simfolder)
 
+# Sample netlist -- list of strings
 netlist = '''
-Thermal NDR voltage sweeping with series resistor (Slesazeck parameters)
-Rd vd 0 R=Resistance()
-Rs vd vin R=Rser
-C1 T 0 {Cth}
-V1 vin 0 PWL(0 0 {sweepdur/2} {sweepmax} {sweepdur} 0)
-B1 T 0 I=dTdt()
-.FUNC dTdt()=-(Resistance()*i(Rd)**2-(v(T)-Tamb)/Rth)
-.FUNC Resistance()=R0*exp(echarge*(Ea+deltav())/(boltz*v(T)))
-.FUNC deltav()=-sqrt(echarge*E()/(pi*e0*er))
-.FUNC dv()=v(vd)
-.FUNC E()=dv()/dox
-.PARAM R0=34
-.PARAM Rth=1.75e5
-.PARAM Ea=0.215
-.PARAM Rser=200
-.PARAM e0=8.85e-12
-.PARAM er=45
-.PARAM dox=18e-9
-.PARAM Tamb=298
-.PARAM Cth=5e-10
-.PARAM sweepdur=10
-.PARAM sweepmax=3
-.ic v(T)=Tamb
-.tran 0 {sweepdur} 0 {sweepdur/1e5}
+* Example netlist
+V1 in 0 PULSE(0 5 1m 1n 1n 10m)
+R1 in N001 {R}
+L1 N001 N002 {L}
+C1 N002 0 {C}
+.PARAM C=1e-6
+.PARAM L=1e-3
+.PARAM R=1
+.tran 0 10m 0
 .backanno
 .end
 '''.strip().split('\n')
@@ -70,7 +59,7 @@ def netlist_fromfile(filepath):
     return [nl.strip() for nl in netlist]
 
 def read_log(filepath):
-    ''' Read ltspice .log file and parse out some information. '''
+    ''' Read ltspice .log file and parse out some information.  Return a dict'''
     filepath = replace_ext(filepath, 'log')
     print(f'Reading {filepath}')
     with open(filepath, 'r') as f:
@@ -93,7 +82,7 @@ def read_log(filepath):
     return logdict
 
 def read_net(filepath):
-    ''' Read ltspice .net file and parse out some information. '''
+    ''' Read ltspice .net file and parse out some information.  Return a dict'''
     netinfo = {}
     filepath = replace_ext(filepath, 'net')
     print(f'Reading {filepath}')
@@ -111,8 +100,8 @@ def read_raw(filepath):
     '''
     Read ltspice output .raw file.  No bullshit.
     for ltspice XVII version
-    return dict of parameters and arrays contained in the file
     Does not load parameter runs because I think those should just be done in python
+    return dict of parameters and arrays contained in the file
     '''
     filepath = os.path.abspath(filepath)
     filepath = replace_ext(filepath, 'raw')
@@ -303,32 +292,12 @@ def get_title(netlist):
 
 
 ### Functions for operating on netlist
-def flatten(nested):
-    ''' flatten a tree of strings '''
-    for i in nested:
-            if isinstance(i, Iterable) and not isinstance(i, str):
-                for subc in flatten(i):
-                    yield subc
-            else:
-                yield i
-def similarity(netlist, line):
-    '''
-    Return the number of characters that are the same as 'line' for each line of netlist
-    TODO: I think there's no reason for this function to exist outside of netinsert
-    '''
-    # This is not the most efficient thing ever but who cares
-    def compare(str1, str2):
-        if str1.startswith(str2):
-            return len(str2)
-        else:
-            return [c1 == c2 for c1,c2 in zip(str1, str2)].index(False)
-    return [compare(l, line) for l in netlist]
-
 def netinsert(netlist, newline):
     '''
     Replace a line in the netlist if it corresponds to an existing command,
     or else add it as a new line in a reasonable position
     Does not check if you are putting in a command that makes sense or will run!
+    Return the netlist with the inserted line
     '''
     # Spice language is not very uniform so it's not completely trivial how to decide
     # When to replace a line or when to add a new line.
@@ -337,7 +306,7 @@ def netinsert(netlist, newline):
 
     # Find the part of the string that identifies what the command does
     cmd, *rest = newline.split(' ', 1)
-    if cmd in ('.PARAM', '.FUNC', '.ic'):
+    if cmd.lower() in ('.param', '.func', '.ic'):
         # Compare also with the thing before the = sign
         cmd_id = newline[:newline.find('=') + 1]
     else:
@@ -346,6 +315,18 @@ def netinsert(netlist, newline):
     # How similar is each line to the identifying string?
     # I will put the new line after the one most similar to it
     # There's probably a better approach.
+    def similarity(netlist, line):
+        '''
+        Return the number of characters that are the same as 'line' for each line of netlist
+        '''
+        # This is not the most efficient thing ever but who cares
+        def compare(str1, str2):
+            if str1.lower().startswith(str2.lower()):
+                return len(str2)
+            else:
+                return [c1.lower() == c2.lower() for c1,c2 in zip(str1, str2)].index(False)
+        return [compare(l, line) for l in netlist]
+
     simi = similarity(netlist, cmd_id)
     maxsim = max(simi)
     if maxsim == len(cmd_id):
@@ -361,7 +342,10 @@ def netinsert(netlist, newline):
     return netlist
 
 def netchange(netlist, *newlines):
-    ''' Pass any (potentially nested) list of strings and merge them with netlist '''
+    '''
+    Pass any (potentially nested) list of strings and merge them with netlist
+    Return the resulting merged netlist
+    '''
     strings = flatten(newlines)
     return reduce(netinsert, strings, netlist)
 def netchanger(netlist):
@@ -388,6 +372,15 @@ def set_title(netlist, title):
     '''
     return [title] + netlist[1:]
 
+def flatten(nested):
+    ''' flatten a tree of strings '''
+    for i in nested:
+            if isinstance(i, Iterable) and not isinstance(i, str):
+                for subc in flatten(i):
+                    yield subc
+            else:
+                yield i
+
 
 ### Spice directives
 def param(name, value):
@@ -407,8 +400,11 @@ def element(name, cathode, anode, val):
     '''
     return f'{name} {cathode} {anode} {val}'
 
-def transient(start=0, stop=1, maxstep=1e-4):
-    return f'.tran 0 {stop} {start} {maxstep}'
+def transient(start=0, stop=1, maxstep=1e-4, stopsteady=False):
+    cmd = f'.tran 0 {stop} {start} {maxstep}'
+    if stopsteady:
+        cmd += ' steady'
+    return cmd
 
 def initial_condition(name, value):
     return f'.ic {name}={value}'
@@ -444,145 +440,3 @@ if 0:
         data.append(d)
     df = pd.DataFrame(data)
 
-# Just some ideas that I don't want to execute ever
-if 0:
-    # What if you did something like this?
-
-    def param(name, value):
-        return f'.PARAM {name}={value}'
-
-    def element(name, cathode, anode, val):
-        return f'{name} {cathode} {anode} {val}'
-
-
-    # Could give nodes python names
-    vin = 'vin'
-    modifications = [
-                    param('a', 3),
-                    param('b', 10),
-                    param('c', 'a*b'), # Quoted code is evaluated by spice.
-                    element('C2', vin, 0, 1e-9),
-                    transient(0, 1, 1e-4)
-                    ]
-    newnetlist = reduce(netinsert, modifications, netlist)
-
-    def simchange(netlist0):
-        def newnetlist(*modifications):
-            return reduce(netinsert, *modifications, netlist0)
-        return newnetlist
-
-    simname = simchange(netlist)
-    newnetlist = simname(modifications)
-    d = runspice(newnetlist)
-
-    # Or..
-
-    def ndrparams():
-        '''
-        One way to define parameters.
-        Nice syntax, doesn't pollute global namespace, computes values in python, not in spice
-        So if there are parameters written in terms of other parameters, we will see the values
-        in the netlist, not unevaluated strings.
-        TODO: Would be really cool to put simple python functions in here and use the ast to convert into a string
-            that spice can understand.  Then we can split functions into multiple lines, do more complicated things.
-            How would we handle references to node current/voltages?  Pass undefined names into spice as strings?
-        '''
-        def Resistance():
-            tox / wox**2 / A * exp(echarge * Ea / boltz / T()) * exp(-c * sqrt(E()))
-        wox = 250e-9
-        tox = 30e-9
-        A = 14287.41
-        c = 0.00026
-        Rth50090 = 80000.0
-        Rth = Rth50090 * 500e-9 / wox
-        Ea = 0.26
-        Rser = 5000.0
-        Tamb = 300.0
-        Cth50090 = 5e-12
-        Cth = Cth50090 / 500e-9**2 / 90e-9 * wox**2 *tox
-        sweepdur = 1.0
-        sweepmax = 10.0
-        return locals()
-    params = ndrparams()
-
-    net = netlist = paramchange(filenet, params)
-
-    # Could we use the above approach to also define functions/circuit elements/other directives?
-
-
-    # OO approach might look like this
-    class NetList(object):
-        '''
-        NOT DONE
-        I'm tempted to go down the object oriented rabbit hole
-        Could make a class that can parse and construct ltspice netlists
-        Idea is to create a convenient python syntax which can modify an input netlist
-        Could give every type of spice command an object, which just evaluate to strings
-
-        maybe netlist[3] can retrieve and assign new lines
-        maybe netlist.param2 = 45.3 can set .PARAMS, overwriting as necessary
-        maybe netlist.wire(node1, node2) can add a wire
-        maybe netlist.resistor(node1, node2, value, name=None) can add a resistor...
-        maybe netlist.voltage(type, param2, param2,..) can add/change a voltage source
-        maybe netlist + string can merge that line of code into the netlist
-
-        since the content of the netlist string will depend on the state of the instance,
-        we will need to construct it only when it is asked for
-
-        Should also keep the lines organized in some way, connections at top, funcs, params, ...
-        '''
-        def __init__(self, netlist0='* New netlist'):
-            # Can initalize with an existing netlist
-            self._netstring = netlist0
-            self._netlist = netlist0.split('\n')
-            netparams = re.findall('.PARAM (.*)=(.*)', netlist0)
-            # Are params always floats?
-            netparams = {k:np.float32(v) for k,v in netparams}
-            for k,v in netparams.items():
-                setattr(self, k, v)
-
-        def __repr__(self):
-            # Just print the string
-            return self.netlist
-
-        def clear_params(self):
-            for k in self.params().keys():
-                del self.__dict__[k]
-
-        @property
-        def params(self):
-            # Determine which class attributes are .PARAMS
-            # Let's say all numbers are .PARAMS
-            return {k:v for k,v in self.__dict__.items() if isinstance(v, Number)}
-
-        @params.setter
-        def params(self, values):
-            # Can update params with a dict
-            # Don't do params['paramname'] = value, this won't do anything
-            #self.clear_params()
-            self.__dict__.update(values)
-
-        @property
-        def netlist(self):
-            #print('Constructing netlist...')
-            for k,v in self.__dict__.items():
-                if isinstance(v, Number):
-                    # TODO: this can replace a param, but cannot add or delete a param
-                    newnetlist = replaceparam(self._netstring, k, v)
-                    self._netstring = newnetlist
-            return self._netstring
-
-        @netlist.setter
-        def netlist(self, value):
-            self._netstring = value
-
-
-    sim = NetList(netlist0)
-    sim.a = 3
-    sim.b = 10
-    sim.c = sim.a * sim.b # Code is evaluated by python
-    sim += Capacitor(1, 'in', 0, 1e-9)
-    d = sim.run()
-
-    # Is this better? Interface seems at first to be nicer. But the complex code is in the class definitions
-    # Basically it looks nice on the surface, but it's a mess on the inside?

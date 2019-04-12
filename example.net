@@ -1,0 +1,11 @@
+* Example netlist
+V1 in 0 PULSE(0 5 1m 1n 1n 10m)
+R1 in N001 {R}
+L1 N001 N002 {L}
+C1 N002 0 {C}
+.PARAM C=1e-6
+.PARAM L=1e-3
+.PARAM R=1
+.tran 0 10m 0
+.backanno
+.end
