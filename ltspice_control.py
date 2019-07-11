@@ -27,6 +27,7 @@ import time
 import fnmatch
 from numbers import Number
 from functools import reduce, partial
+import warnings
 
 # Make sure this points to your spice executable, and that it is the XVII version
 spicepath = r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"
@@ -227,9 +228,10 @@ def write_wav(times, voltages, filename):
         w.writeframes(values)
 
 # TODO cache some inputs and outputs, so that you don't keep running the same simulations
+# at least cache the file locations
 #from functools import lru_cache
 #@lru_cache(maxsize=32)
-def runspice(netlist, namemap=None):
+def runspice(netlist, namemap=None, timeout=None):
     ''' Run a netlist with ltspice and return all the output data '''
     # TODO: Sometimes when spice has an error, python just hangs forever.  Need a timeout or something.
     # TODO: is there any benefit to spawning many ltspice processes at once, instead of sequentially?
@@ -245,11 +247,16 @@ def runspice(netlist, namemap=None):
         f.write('\n'.join(netlist))
     print(f'Executing {netlistfp}')
     # Tell spice to execute it
+    # If error/timeout, maybe we want to keep running things, don't raise the error just return empty data
     try:
-        subprocess.check_output([spicepath, '-b', '-Run', netlistfp])
-    except subprocess.CalledProcessError:
+        subprocess.check_output([spicepath, '-b', '-Run', netlistfp], timeout=timeout)
+    except subprocess.CalledProcessError as err:
+        print(err)
         print(read_log(replace_ext(netlistfp, 'log')))
-        raise
+        return {}
+    except subprocess.TimeoutExpired as err:
+        print(err)
+        return {}
 
     #subprocess.check_output([spicepath, '-b', '-ascii', '-Run', netlistfp])
     # Read result
