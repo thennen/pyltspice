@@ -6,7 +6,7 @@ As far as I know, we must communicate with ltspice via file io
 
 Just need to translate python into shitty spice language.
 More often we will input existing netlists and do operations on them.
-I'm taking a functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
+I'm taking a ~functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
 
 There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to ~work.
 Problem is he wrote his own data container classes which are clunky and I don't want to use them.
@@ -227,6 +227,7 @@ def write_wav(times, voltages, filename):
 
         w.writeframes(values)
 
+# TODO somehow stop spice from stealing focus even though no window is visible
 # TODO cache some inputs and outputs, so that you don't keep running the same simulations
 # at least cache the file locations
 #from functools import lru_cache
