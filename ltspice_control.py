@@ -33,7 +33,9 @@ import warnings
 spicepath = r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"
 
 # Here is where all the simulation files (netlists and results) will be dumped
+# It can get quite large if you don't delete the files afterward
 simfolder = r"ltspice_sims"
+simfolder = os.path.abspath(simfolder)
 
 if not os.path.isdir(simfolder):
     os.makedirs(simfolder)
@@ -404,9 +406,13 @@ def element(name, cathode, anode, val):
     TODO: Overwrite value without specifying cathode and anode
     TODO: Autoname if name not given.
     Don't know how this would work, as we would need to be aware of the netlist that it is getting applied to, but we already return a string before that happens.
-    DAMN YOU PYTHON
     '''
     return f'{name} {cathode} {anode} {val}'
+
+# TODO: make functions for common elements.
+#def resistor():
+#def capacitor():
+#def inductor():
 
 def transient(start=0, stop=1, maxstep=1e-4, stopsteady=False):
     cmd = f'.tran 0 {stop} {start} {maxstep}'
