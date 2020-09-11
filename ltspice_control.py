@@ -4,24 +4,31 @@ Will be possible to express much more complicated operations than in the spice l
 
 As far as I know, we must communicate with ltspice via file io
 
-Just need to translate python into shitty spice language.
+Just need to translate python into spice language.
 More often we will input existing netlists and do operations on them.
 I'm taking a ~functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
 
 There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to ~work.
+https://github.com/nunobrum/PyLTSpice
 Problem is he wrote his own data container classes which are clunky and I don't want to use them.
-I want to use built-in data classes, or well established and maintained classes like pandas series and dataframes.
+I want to use built-in data classes, like dict and list
+which can be converted into well established and maintained containers like pandas series and dataframes.
+
+There's also this, which I haven't tested
+https://github.com/DongHoonPark/ltspice_pytool
 '''
 #TODO: Spice can't tolerate spaces in equations, which makes them really hard to read.
 # It took me an hour to realize this, anything following a space is just ignored
 # We could easily allow spaces here and then always delete them before writing to disk
+#TODO: Spice is case insensitive -- change everything to account for that
+#TODO: Spice has lots of different syntax for the same thing.  e.g. .param name value  .PARAM name=value ..
+#      write a better parser
 
 import subprocess
 import os
 import re
 import numpy as np
-import pandas as pd
-from collections import Iterable
+from collections.abc import Iterable
 from datetime import datetime
 import time
 import fnmatch
@@ -147,14 +154,18 @@ def read_raw(filepath):
         numvars = raw_params['No. Variables']
         dtype = np.dtype({'names':colnames,
                           'formats':[np.float64] + [np.float32]*(numvars - 1)})
+        # d is a dreaded numpy structured array
         d = np.fromfile(raw_file, dtype)
-        df = pd.DataFrame(d)
+        ddict = {k:d[k] for k in d.dtype.names}
         # I have no idea why this is necessary
-        df['time'] = np.abs(df['time'])
-        dfdict = {k:np.array(v) for k,v in dict(df).items()}
-
+        if 'time' in ddict:
+            ddict['time'] = np.abs(ddict['time'])
+        for k,v in ddict.items():
+            if v.size == 1:
+                # numpy 0d arrays are stupid
+                ddict[k] = v.item()
     # Put data and metadata together in one dict
-    outdict = {**raw_params, **dfdict}
+    outdict = {**raw_params, **ddict}
 
     return outdict
 
@@ -191,6 +202,7 @@ def timestamp():
 def valid_filename(s):
     s = str(s).strip().replace(' ', '_')
     return re.sub(r'(?u)[^-\w.]', '', s)
+
 def write_wav(times, voltages, filename):
     # Some dumb code I found online from some guy who doesn't know what numpy is
     import struct
@@ -292,6 +304,7 @@ def get_params(netlist):
         except ValueError:
             pass
     return params
+
 def get_title(netlist):
     ''' My understanding is that the first line must always be the title '''
     if netlist[0].startswith('*'):
@@ -358,6 +371,7 @@ def netchange(netlist, *newlines):
     '''
     strings = flatten(newlines)
     return reduce(netinsert, strings, netlist)
+
 def netchanger(netlist):
     ''' Closure that remembers the input netlist, and allows you to modify it by passing partial netlists '''
     changer = partial(netchange, netlist)
@@ -375,6 +389,7 @@ def paramchange(netlist, paramdict=None, **kwargs):
         newparams += [param(k, v) for k,v in kwargs.items()]
     newnet = netchange(netlist, newparams)
     return newnet
+
 def set_title(netlist, title):
     '''
     First line is always the title?
@@ -399,6 +414,7 @@ def param(name, value):
 def function(funcdef):
     funcdef = funcdef.replace(' ', '')
     return f'.FUNC {funcdef}'
+
 def element(name, cathode, anode, val):
     '''
     For now we do not distinguish the element types.
@@ -430,6 +446,7 @@ def sine(freq, amp, offset=0, delay=0, phase=0, damping=0, ncycles=None):
     if ncycles is None:
         ncycles = ''
     return f'SINE({offset} {amp} {freq} {delay} {damping} {phase} {ncycles})'
+
 def pulse(Voff, Von, trise, ton, tfall, period=None, delay=0, ncycles=None):
     if period is None:
         period = trise + ton + tfall + delay
@@ -444,13 +461,18 @@ def PWL(t, v):
     return f'PWL({interleaved_str})'
 
 
-
 if 0:
-    data = []
-    for T0 in range(300, 400, 10):
-        # This is how you can change parameters
-        netlist2 = netinsert(netlist, parameter('Tamb', T0))
-        d = runspice(netlist2)
-        data.append(d)
-    df = pd.DataFrame(data)
+    # Try changing all parameters by ±50%
+    datalist = []
+    for name, value in get_params(netlist).items():
+        for v in np.linspace(0.5*value, 1.5*value, 5):
+            data = runspice(netchange(netlist, param(name, v)))
+            datalist.append(data)
+
+    plt.figure()
+    for data in datalist:
+        plt.plot(data['time'], data['I(R1)'])
+
+    #df = pd.DataFrame(datalist)
+
 
