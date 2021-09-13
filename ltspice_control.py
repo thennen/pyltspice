@@ -63,8 +63,9 @@ C1 N002 0 {C}
 '''.strip().split('\n')
 
 ### File IO
-def netlist_fromfile(filepath):
-    with open(filepath, 'r') as f:
+def netlist_fromfile(filepath, encoding='utf-16-le'):
+    # ltspice keeps updating and changing the encoding.
+    with open(filepath, 'r', encoding=encoding) as f:
         netlist = f.readlines()
     return [nl.strip() for nl in netlist]
 
@@ -156,7 +157,7 @@ def read_raw(filepath):
                           'formats':[np.float64] + [np.float32]*(numvars - 1)})
         # d is a dreaded numpy structured array
         d = np.fromfile(raw_file, dtype)
-        ddict = {k:d[k] for k in d.dtype.names}
+        ddict = {k:d[k] for k in colnames}
         # I have no idea why this is necessary
         if 'time' in ddict:
             ddict['time'] = np.abs(ddict['time'])
