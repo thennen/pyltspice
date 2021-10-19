@@ -1,18 +1,18 @@
 '''
-Let's see how clunky it is to run ltspice simulations from python.
+Let's see how clunky it is to define and run ltspice simulations from python.
 Will be possible to express much more complicated operations than in the spice language
 
 As far as I know, we must communicate with ltspice via file io
 
 Just need to translate python into spice language.
-More often we will input existing netlists and do operations on them.
+More often we will input existing netlists and modify them.
 I'm taking a ~functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
 
-There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to ~work.
+There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to work.
 https://github.com/nunobrum/PyLTSpice
 Problem is he wrote his own data container classes which are clunky and I don't want to use them.
 I want to use built-in data classes, like dict and list
-which can be converted into well established and maintained containers like pandas series and dataframes.
+which can be converted into well established and maintained containers like pandas series and dataframes for further analysis.
 
 There's also this, which I haven't tested
 https://github.com/DongHoonPark/ltspice_pytool
@@ -35,6 +35,10 @@ import fnmatch
 from numbers import Number
 from functools import reduce, partial
 import warnings
+
+# ltspice uses whatever encoding it feels like using, needs to be detected
+# I think it takes cues from what kind of characters you use in the GUI
+import chardet
 
 # Make sure this points to your spice executable, and that it is the XVII version
 spicepath = r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"
@@ -62,31 +66,47 @@ C1 N002 0 {C}
 .end
 '''.strip().split('\n')
 
+def read_and_decode(filepath):
+    ''' Use this to read a file if you don't know what the encoding is '''
+    with open(filepath, 'rb') as f:
+        data = f.read()
+    encoding = chardet.detect(data)['encoding']
+    return data.decode(encoding)
+
 ### File IO
-def netlist_fromfile(filepath, encoding='utf-16-le'):
-    # ltspice keeps updating and changing the encoding.
-    with open(filepath, 'r', encoding=encoding) as f:
-        netlist = f.readlines()
-    return [nl.strip() for nl in netlist]
+def netlist_fromfile(filepath):
+    ''' Read ltspice .net file.  Return a list of strings'''
+    netlist = read_and_decode(filepath).split('\n')
+    return [nl.strip() for nl in netlist if nl]
 
 def read_log(filepath):
     ''' Read ltspice .log file and parse out some information.  Return a dict'''
     filepath = replace_ext(filepath, 'log')
     print(f'Reading {filepath}')
-    with open(filepath, 'r') as f:
-        lines = f.read()
-    logitems = re.findall('(.*)[=,:] (.*)', lines)
+    lines = read_and_decode(filepath)
+    logitems = re.findall('(.[^\s]*)[=,:] (.*)', lines)
     if not logitems:
         # quick fix, don't know why, but sometimes we have utf-16 encoding and sometimes not
+        # chardet can't seem to detect this
         with open(filepath, 'r', encoding='utf-16-le') as f:
             lines = f.read()
-        logitems = re.findall('(.*)[=,:] (.*)', lines)
+        logitems = re.findall('(.[^\s]*)[=,:] (.*)', lines)
     def convert_vals(val):
         val = val.strip()
         if val.isdigit():
             val = np.int32(val)
         return val
-    logdict = {k.strip():convert_vals(v) for k,v in logitems}
+    # might have more than one of each type (e.g. multiple WARNINGs)
+    # store them as lists of strings if there are multiple and regret it later
+    logdict = {}
+    for k,v in logitems:
+        key = k.strip()
+        if key in logdict:
+            if not isinstance(logdict[key], list):
+                logdict[key] = [logdict[key]]
+            logdict[key].append(convert_vals(v))
+        else:
+            logdict[key] = convert_vals(v)
     if 'Total elapsed time' in logdict:
         logdict['sim_time'] = np.float32(logdict['Total elapsed time'].split(' ')[0])
         del logdict['Total elapsed time']
@@ -97,9 +117,7 @@ def read_net(filepath):
     netinfo = {}
     filepath = replace_ext(filepath, 'net')
     print(f'Reading {filepath}')
-    with open(filepath, 'r') as f:
-        netlist = f.read()
-    netlist = netlist.split('\n')
+    netlist = netlist_fromfile(filepath)
     netparams = get_params(netlist)
     #netfuncs = re.findall('.FUNC (.*)=(.*)', netlist)
     #netfuncs = {k:v for k,v in netfuncs}
@@ -109,10 +127,10 @@ def read_net(filepath):
 
 def read_raw(filepath):
     '''
-    Read ltspice output .raw file.  No bullshit.
+    Read ltspice output .raw file.
+    return dict of parameters and arrays contained in the file
     for ltspice XVII version
     Does not load parameter runs because I think those should just be done in python
-    return dict of parameters and arrays contained in the file
     '''
     filepath = os.path.abspath(filepath)
     filepath = replace_ext(filepath, 'raw')
@@ -180,9 +198,10 @@ def read_spice(filepath, namemap=None):
 
     # Pick and choose the data you want to output
     dataout = {**rawdata, **netdata}
-    dataout['sim_time'] = logdata['sim_time']
-    dataout['solver'] = logdata['solver']
-    dataout['method'] = logdata['method']
+    dataout['sim_time'] = logdata.get('sim_time')
+    dataout['solver'] = logdata.get('solver')
+    dataout['method'] = logdata.get('method')
+    dataout['WARNING'] = logdata.get('WARNING')
 
     # Map to other names if you want
     if namemap is not None:
@@ -205,7 +224,6 @@ def valid_filename(s):
     return re.sub(r'(?u)[^-\w.]', '', s)
 
 def write_wav(times, voltages, filename):
-    # Some dumb code I found online from some guy who doesn't know what numpy is
     import struct
 
     def lin_interp(x0, x1, y0, y1, x):
