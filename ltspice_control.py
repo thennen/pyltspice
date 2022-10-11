@@ -35,6 +35,7 @@ import fnmatch
 from numbers import Number
 from functools import reduce, partial
 import warnings
+import hashlib
 
 # ltspice uses whatever encoding it feels like using, needs to be detected
 # I think it takes cues from what kind of characters you use in the GUI
@@ -50,6 +51,8 @@ simfolder = os.path.abspath(simfolder)
 
 if not os.path.isdir(simfolder):
     os.makedirs(simfolder)
+
+net_hashes = dict()
 
 # Sample netlist -- list of strings
 netlist = '''
@@ -260,17 +263,39 @@ def write_wav(times, voltages, filename):
 
         w.writeframes(values)
 
+def hash(netlist):
+    return hashlib.md5(bytes('\n'.join(netlist), 'utf-8')).hexdigest()
+
+def from_cache(netlist, namemap=None):
+    ''' Check whether the same netlist has already been run, and if yes, return the results written to disk'''
+    # Update cache
+    existing_fns = fnmatch.filter(os.listdir(simfolder), '*.net')
+    for fn in existing_fns:
+        if fn not in net_hashes.values():
+            existing_net = netlist_fromfile(os.path.join(simfolder, fn))
+            #net_hashes[fn] = hash(existing_net)
+            net_hashes[hash(existing_net)] = fn
+    # Check if hash already in the cache
+    h = hash(netlist)
+    if h in net_hashes:
+        print('Loading previous matching sim from disk')
+        return read_spice(os.path.join(simfolder, net_hashes[h]), namemap=namemap)
+
+
 # TODO somehow stop spice from stealing focus even though no window is visible
 # TODO cache some inputs and outputs, so that you don't keep running the same simulations
 # at least cache the file locations
 #from functools import lru_cache
 #@lru_cache(maxsize=32)
-def runspice(netlist, namemap=None, timeout=None):
+def runspice(netlist, namemap=None, timeout=None, check_cache=True):
     ''' Run a netlist with ltspice and return all the output data '''
     # TODO: Sometimes when spice has an error, python just hangs forever.  Need a timeout or something.
     # TODO: is there any benefit to spawning many ltspice processes at once, instead of sequentially?
     if type(netlist) is str:
         netlist = netlist.split('\n')
+    if check_cache:
+        old_result = from_cache(netlist)
+        if old_result: return old_result
     t0 = time.time()
     # Write netlist to disk
     title = valid_filename(get_title(netlist))
