@@ -294,7 +294,7 @@ def runspice(netlist, namemap=None, timeout=None, check_cache=True):
     if type(netlist) is str:
         netlist = netlist.split('\n')
     if check_cache:
-        old_result = from_cache(netlist)
+        old_result = from_cache(netlist, namemap=namemap)
         if old_result: return old_result
     t0 = time.time()
     # Write netlist to disk
