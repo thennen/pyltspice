@@ -275,8 +275,8 @@ def from_cache(netlist, namemap=None):
             existing_net = netlist_fromfile(os.path.join(simfolder, fn))
             #net_hashes[fn] = hash(existing_net)
             # only add to cache if there is corresponding output data
-            raw_exists = os.path.isfile(os.path.join(simfolder, fn[:-3] + '.raw'))
-            log_exists = os.path.isfile(os.path.join(simfolder, fn[:-3] + '.log'))
+            raw_exists = os.path.isfile(os.path.join(simfolder, fn[:-3] + 'raw'))
+            log_exists = os.path.isfile(os.path.join(simfolder, fn[:-3] + 'log'))
             if raw_exists & log_exists:
                 net_hashes[hash(existing_net)] = fn
     # Check if hash already in the cache
