@@ -274,13 +274,18 @@ def from_cache(netlist, namemap=None):
         if fn not in net_hashes.values():
             existing_net = netlist_fromfile(os.path.join(simfolder, fn))
             #net_hashes[fn] = hash(existing_net)
-            net_hashes[hash(existing_net)] = fn
+            # only add to cache if there is corresponding output data
+            raw_exists = os.path.isfile(os.path.join(simfolder, fn[:-3] + '.raw'))
+            log_exists = os.path.isfile(os.path.join(simfolder, fn[:-3] + '.log'))
+            if raw_exists & log_exists:
+                net_hashes[hash(existing_net)] = fn
     # Check if hash already in the cache
     h = hash(netlist)
     if h in net_hashes:
-        print('Loading previous matching sim from disk')
+        print('Reading previous matching sim from disk')
         return read_spice(os.path.join(simfolder, net_hashes[h]), namemap=namemap)
 
+    return False
 
 # TODO somehow stop spice from stealing focus even though no window is visible
 # TODO cache some inputs and outputs, so that you don't keep running the same simulations
