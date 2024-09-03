@@ -1,27 +1,10 @@
-'''
-Let's see how clunky it is to define and run ltspice simulations from python.
-Will be possible to express much more complicated operations than in the spice language
-
-As far as I know, we must communicate with ltspice via file io
-
-Just need to translate python into spice language.
-More often we will input existing netlists and modify them.
-I'm taking a ~functional programming approach for fun, but could imagine an object oriented way that could be ok, too.
-
-There is a library by Nuno Brum called PyLTSpice, which I tested and it seems to work.
-https://github.com/nunobrum/PyLTSpice
-Problem is he wrote his own data container classes which are clunky and I don't want to use them.
-I want to use built-in data classes, like dict and list
-which can be converted into well established and maintained containers like pandas series and dataframes for further analysis.
-
-There's also this, which I haven't tested
-https://github.com/DongHoonPark/ltspice_pytool
-'''
 #TODO: Spice can't tolerate spaces in equations, which makes them really hard to read.
 # It took me an hour to realize this, anything following a space is just ignored
 # We could easily allow spaces here and then always delete them before writing to disk
+
 #TODO: Spice is case insensitive -- change everything to account for that
-#TODO: Spice has lots of different syntax for the same thing.  e.g. .param name value  .PARAM name=value ..
+
+#TODO: Spice can use different syntax for the same thing.  e.g. .param name value  .PARAM name=value ..
 #      write a better parser
 
 import subprocess
@@ -29,28 +12,38 @@ import os
 import re
 import numpy as np
 from collections.abc import Iterable
+from itertools import chain
 from datetime import datetime
 import time
 import fnmatch
-from numbers import Number
 from functools import reduce, partial
-import warnings
 import hashlib
 
 # ltspice uses whatever encoding it feels like using, needs to be detected
 # I think it takes cues from what kind of characters you use in the GUI
 import chardet
 
-# Make sure this points to your spice executable, and that it is the XVII version
-spicepath = r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"
+verbose = True
+
+def vprint(*args):
+    if verbose:
+        print(*args)
+
+# Try to find spice executable, should be at least the XVII version
+spicepaths = [os.path.expandvars(r"%userprofile%\AppData\Local\Programs\ADI\LTspice\LTspice.exe"),
+              r"C:\Program Files\ADI\LTspice\LTspice.exe",
+              r"C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe"]
+spicepath = next((p for p in spicepaths if os.path.isfile(p)), None)
+
+if spicepath is None:
+    Warning('LTspice executable not found!  You can set the spicepath variable manually.')
 
 # Here is where all the simulation files (netlists and results) will be dumped
 # It can get quite large if you don't delete the files afterward
-simfolder = r"ltspice_sims"
-simfolder = os.path.abspath(simfolder)
+#simfolder = os.path.abspath('ltspice_sims')
+simfolder = os.path.expandvars(r"%userprofile%\ltspice_sims")
 
-if not os.path.isdir(simfolder):
-    os.makedirs(simfolder)
+vprint(f'Simulation files will be stored at {simfolder}.  To change, overwrite the simfolder variable')
 
 net_hashes = dict()
 
@@ -69,6 +62,8 @@ C1 N002 0 {C}
 .end
 '''.strip().split('\n')
 
+netlist_path = os.path.join(os.path.split(__file__)[0], 'example.net')
+
 def read_and_decode(filepath):
     ''' Use this to read a file if you don't know what the encoding is '''
     with open(filepath, 'rb') as f:
@@ -85,15 +80,15 @@ def netlist_fromfile(filepath):
 def read_log(filepath):
     ''' Read ltspice .log file and parse out some information.  Return a dict'''
     filepath = replace_ext(filepath, 'log')
-    print(f'Reading {filepath}')
+    vprint(f'Reading {filepath}')
     lines = read_and_decode(filepath)
-    logitems = re.findall('(.[^\s]*)[=,:] (.*)', lines)
+    logitems = re.findall('(.*)[=,:] (.*)', lines)
     if not logitems:
         # quick fix, don't know why, but sometimes we have utf-16 encoding and sometimes not
         # chardet can't seem to detect this
         with open(filepath, 'r', encoding='utf-16-le') as f:
             lines = f.read()
-        logitems = re.findall('(.[^\s]*)[=,:] (.*)', lines)
+        logitems = re.findall('(.*)[=,:] (.*)', lines)
     def convert_vals(val):
         val = val.strip()
         if val.isdigit():
@@ -119,7 +114,7 @@ def read_net(filepath):
     ''' Read ltspice .net file and parse out some information.  Return a dict'''
     netinfo = {}
     filepath = replace_ext(filepath, 'net')
-    print(f'Reading {filepath}')
+    vprint(f'Reading {filepath}')
     netlist = netlist_fromfile(filepath)
     netparams = get_params(netlist)
     #netfuncs = re.findall('.FUNC (.*)=(.*)', netlist)
@@ -132,14 +127,14 @@ def read_raw(filepath):
     '''
     Read ltspice output .raw file.
     return dict of parameters and arrays contained in the file
-    for ltspice XVII version
+    written for ltspice XVII version, but seems to work on later versions
     Does not load parameter runs because I think those should just be done in python
     '''
     filepath = os.path.abspath(filepath)
     filepath = replace_ext(filepath, 'raw')
 
     # Read information from the .raw file
-    print(f'Reading {filepath}')
+    vprint(f'Reading {filepath}')
     with open(filepath, 'rb') as raw_file:
         colnames = []
         units = []
@@ -228,6 +223,7 @@ def valid_filename(s):
 
 def write_wav(times, voltages, filename):
     import struct
+    import wave
 
     def lin_interp(x0, x1, y0, y1, x):
         x0 = float(x0)
@@ -238,12 +234,13 @@ def write_wav(times, voltages, filename):
         return y0 + (x - x0) * (y1 - y0) / (x1 - x0)
 
     with wave.open(filename, 'w') as w:
+        SAMPLING_RATE = 44_100
         w.setnchannels(1)
         w.setsampwidth(2)
-        w.setframerate(44100)
+        w.setframerate(SAMPLING_RATE)
         w.setnframes(0)
         w.setcomptype('NONE')
-        w.writeframes(np.sin(np.linspace(0, 8000*2*pi, 100000)))
+        w.writeframes(np.sin(np.linspace(0, 8000*2*np.pi, 100000)))
         m = max(max(voltages), -min(voltages))
         vrange = m
 
@@ -282,8 +279,10 @@ def from_cache(netlist, namemap=None):
     # Check if hash already in the cache
     h = hash(netlist)
     if h in net_hashes:
-        print('Reading previous matching sim from disk')
-        return read_spice(os.path.join(simfolder, net_hashes[h]), namemap=namemap)
+        fp = os.path.join(simfolder, net_hashes[h])
+        if os.path.isfile(fp):
+            vprint('Reading the previous result of a matching simulation from disk')
+            return read_spice(fp, namemap=namemap)
 
     return False
 
@@ -295,7 +294,9 @@ def from_cache(netlist, namemap=None):
 def runspice(netlist, namemap=None, timeout=None, check_cache=True):
     ''' Run a netlist with ltspice and return all the output data '''
     # TODO: Sometimes when spice has an error, python just hangs forever.  Need a timeout or something.
-    # TODO: is there any benefit to spawning many ltspice processes at once, instead of sequentially?
+    # TODO: add multiprocessing
+    if not os.path.isdir(simfolder):
+        os.makedirs(simfolder, exist_ok=True)
     if type(netlist) is str:
         netlist = netlist.split('\n')
     if check_cache:
@@ -306,10 +307,10 @@ def runspice(netlist, namemap=None, timeout=None, check_cache=True):
     title = valid_filename(get_title(netlist))
     netlistfp = os.path.join(simfolder, timestamp() + f'_{title}.net')
     netlistfp = os.path.abspath(netlistfp)
-    print(f'Writing {netlistfp}')
+    vprint(f'Writing {netlistfp}')
     with open(netlistfp, 'w') as f:
         f.write('\n'.join(netlist))
-    print(f'Executing {netlistfp}')
+    vprint(f'Executing {netlistfp}')
     # Tell spice to execute it
     # If error/timeout, maybe we want to keep running things, don't raise the error just return empty data
     try:
@@ -344,7 +345,7 @@ def recentfile(filter='', n=0, folder=simfolder):
 
 ### Netlist parsing
 def get_params(netlist):
-    params = re.findall('.PARAM (.*)=(.*)', '\n'.join(netlist))
+    params = re.findall('.PARAM (.*)=(.*)', '\n'.join(netlist), re.IGNORECASE)
     params = {k:v for k,v in params}
     # Try to convert params to number
     for k,v in params.items():
@@ -373,9 +374,7 @@ def netinsert(netlist, newline):
     '''
     # Spice language is not very uniform so it's not completely trivial how to decide
     # When to replace a line or when to add a new line.
-
     netlist = netlist.copy()
-
     # Find the part of the string that identifies what the command does
     cmd, *rest = newline.split(' ', 1)
     if cmd.lower() in ('.param', '.func', '.ic'):
@@ -413,13 +412,22 @@ def netinsert(netlist, newline):
 
     return netlist
 
-def netchange(netlist, *newlines):
+def netchange(netlist, *newlines, **params):
     '''
-    Pass any (potentially nested) list of strings and merge them with netlist
+    Pass any (potentially nested) list of strings and merge them with netlist.
+
+    You can also add parameters using keyword arguments.
+
     Return the resulting merged netlist
     '''
     strings = flatten(newlines)
-    return reduce(netinsert, strings, netlist)
+
+    if params:
+        spice_params = [param(k, v) for k,v in params.items()]
+    else:
+        spice_params = []
+
+    return reduce(netinsert, chain(strings, spice_params), netlist)
 
 def netchanger(netlist):
     ''' Closure that remembers the input netlist, and allows you to modify it by passing partial netlists '''
@@ -457,27 +465,36 @@ def flatten(nested):
 
 
 ### Spice directives
-def param(name, value):
-    return f'.PARAM {name}={value}'
+
+def param(name, val):
+    return f'.PARAM {name}={val}'
 
 def function(funcdef):
     funcdef = funcdef.replace(' ', '')
     return f'.FUNC {funcdef}'
 
-def element(name, cathode, anode, val):
+def element(name, anode, cathode, val):
     '''
-    For now we do not distinguish the element types.
+    This does not distinguish the element types.
     Spice will use the first letter of the name to decide what kind of element it is
-    TODO: Overwrite value without specifying cathode and anode
-    TODO: Autoname if name not given.
-    Don't know how this would work, as we would need to be aware of the netlist that it is getting applied to, but we already return a string before that happens.
+    val can be a model name
     '''
-    return f'{name} {cathode} {anode} {val}'
+    return f'{name} {anode} {cathode} {val}'
 
-# TODO: make functions for common elements.
-#def resistor():
-#def capacitor():
-#def inductor():
+def resistor(num, anode, cathode, val):
+    return element(f'R{num}', anode, cathode, val)
+
+def capacitor(num, anode, cathode, val):
+    return element(f'C{num}', anode, cathode, val)
+
+def inductor(num, anode, cathode, val):
+    return element(f'L{num}', anode, cathode, val)
+
+def diode(num, anode, cathode, val):
+    return element(f'L{num}', anode, cathode, val)
+
+def voltage_source(num, anode, cathode, val):
+    return element(f'V{num}', anode, cathode, val)
 
 def transient(start=0, stop=1, maxstep=1e-4, stopsteady=False):
     cmd = f'.tran 0 {stop} {start} {maxstep}'
@@ -510,7 +527,9 @@ def PWL(t, v):
     return f'PWL({interleaved_str})'
 
 
-if 0:
+def test():
+    from matplotlib import pyplot as plt
+    import pandas as pd
     # Try changing all parameters by ±50%
     datalist = []
     for name, value in get_params(netlist).items():
@@ -522,6 +541,7 @@ if 0:
     for data in datalist:
         plt.plot(data['time'], data['I(R1)'])
 
-    #df = pd.DataFrame(datalist)
+    df = pd.DataFrame(datalist)
+    return df
 
 

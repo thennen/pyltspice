@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyltspice"
+version = "0.1.0"
+description = "Python functions for automating LTspice circuit simulations"
+readme = "README.md"
+requires-python = ">=3.6"
+license = { text = "MIT" }
+authors = [{ name = "Tyler Hennen", email = "tyler@hennen.us" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "chardet", "numpy"
+]
+urls = { "Homepage" = "https://github.com/thennen/pyltspice" }

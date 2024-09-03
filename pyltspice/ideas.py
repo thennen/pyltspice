@@ -2,7 +2,7 @@
 
 # Why do we want python control?
 # 1. Need to get the resulting data into a programming language with reasonable analysis and plotting ability
-# 2. In spice, you change things by clicking the mouse a million times, clicking run, and using the really shitty plotting tools
+# 2. In spice, you change things by clicking the mouse a million times, clicking run, and using the really primitive plotting tools
 # 3. Spice does not have a command to execute itself, or analyze itself, so can't express some higher level operations
 # 4. The spice language itself is not great, we really want to redesign the language, and have access to all the nice libraries that python has
 
@@ -26,7 +26,7 @@ wire(node1, gnd)
 # This function gets defined in spice
 @spicefunc
 def I(V):
-    # How to refer to other functions defined in spice? quoting? need some really fancy parsing here..
+    # How to refer to other functions defined in spice? quoting?
     return exp(V**2/kT) * 'otherfunc'
 # This function is just defined here in python
 def condition(data):
