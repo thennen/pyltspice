@@ -39,7 +39,7 @@ We represent netlists in python as a list of strings.  You may write them direct
 I drew this very interesting example circuit in the LTspice GUI: 
 
 
-<img src="images/LCR.png" width=300>
+<img src="docs/images/LCR.png" width=300>
 
 We work with SPICE netlists, not the PCB manufacturing formats now in the export options of recent LTspice versions.  For those, you can get a SPICE netlist from the GUI using `View → Spice NETLIST`, then copy-paste the text.
 
