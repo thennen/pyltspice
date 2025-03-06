@@ -2,7 +2,7 @@
 
 This is something I put together to automate and analyze my LTspice simulations in Python.
 
-There are some existing libraries out there for this, such as [this](https://pypi.org/project/PyLTSpice/) more fully-featured project of the same name, but at the time I couldn't find one that worked for me.
+There are some existing libraries out there, such as [this](https://pypi.org/project/PyLTSpice/) more fully-featured project of the same name, but at the time I couldn't find one that worked for me.
 
 This project takes a lightweight, functional approach. It is structured as a single module (.py file) that contains 
 a set of functions that output SPICE code, operate on netlists, dispatch LTspice, and parse the various output files.
